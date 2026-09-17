@@ -1,13 +1,9 @@
-﻿namespace Score.Api.Dtos
+namespace Score.Api.Dtos;
+
+public sealed class ScoreResponse
 {
-    public class ScoreResponse
-    {
-        public int Id { get; set; }
-
-        public string FirstName { get; set; } = string.Empty;
-
-        public string SecondName { get; set; } = string.Empty;
-
-        public int Score { get; set; }
-    }
+    public int Id { get; init; }
+    public string FirstName { get; init; } = string.Empty;
+    public string SecondName { get; init; } = string.Empty;
+    public int Score { get; init; }
 }

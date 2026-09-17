@@ -1,117 +1,84 @@
-﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
-using Score.ConsoleApp.Data;
-using Score.ConsoleApp.Models;
-using Score.ConsoleApp.Services;
-
-// ------------------------------------------------------
-// Load configuration
-// ------------------------------------------------------
+using Microsoft.Extensions.DependencyInjection;
+using Score.Core.Models;
+using Score.Core.Parsing;
+using Score.Core.Repositories;
+using Score.Infrastructure;
 
 var configuration = new ConfigurationBuilder()
     .SetBasePath(AppContext.BaseDirectory)
-    .AddJsonFile(
-        "appsettings.json",
-        optional: false,
-        reloadOnChange: true)
+    .AddJsonFile("appsettings.json", optional: false)
     .Build();
 
-// ------------------------------------------------------
-// Read configuration values
-// ------------------------------------------------------
-
-var filepath =
-    configuration["CsvSettings:FilePath"];
-
-var connectionString =
-    configuration["ConnectionStrings:ScoreDb"];
-
-var insertIntoDatabaseValue =
-    configuration["DatabaseSettings:InsertIntoDatabase"];
-
-bool.TryParse(
-    insertIntoDatabaseValue,
-    out bool insertIntoDatabase);
-
-//Before code execute validate if the file path exist, fail early rather than later
-if (!File.Exists(filepath))
+var configuredPath = configuration["CsvSettings:FilePath"];
+if (string.IsNullOrWhiteSpace(configuredPath))
 {
-    Console.WriteLine($"File not found: {filepath}");
+    Console.Error.WriteLine("CsvSettings:FilePath is not configured.");
     return;
 }
 
-// Declare a list to store the csv data 
-List<Enitity> entities = new List<Enitity>();
+var filePath = Path.IsPathRooted(configuredPath)
+    ? configuredPath
+    : Path.Combine(AppContext.BaseDirectory, configuredPath);
 
-//Read all line in memory
-var lines = File.ReadAllLines(filepath);
-
-//Loop through the lines by first skinpping the header lines, split them by ',' delimeter 
-// and store them into a list for further processing
-foreach(var line in lines.Skip(1))
+if (!File.Exists(filePath))
 {
-    if(string.IsNullOrWhiteSpace(line)) continue;
+    Console.Error.WriteLine($"File not found: {filePath}");
+    return;
+}
 
-    var column = line.Split(',');
+try
+{
+    var csv = await File.ReadAllTextAsync(filePath);
+    var parser = new ScoreCsvParser();
+    var records = parser.Parse(csv);
 
-    if (column.Length < 3) continue;
-
-    var entity = new Enitity
+    var result = TopScorersResult.From(records);
+    if (result.Score is null)
     {
-        FirstName = column[0].Trim(),
-        SecondName = column[1].Trim(),
-        Score = Convert.ToInt32(column[2].Trim())
-    };
+        Console.WriteLine("No data found.");
+        return;
+    }
 
-    entities.Add(entity);
+    foreach (var scorer in result.Scorers)
+    {
+        Console.WriteLine($"{scorer.FirstName} {scorer.SecondName}");
+    }
+
+    Console.WriteLine($"Score: {result.Score}");
+
+    var insertIntoDatabase = bool.TryParse(
+        configuration["DatabaseSettings:InsertIntoDatabase"],
+        out var insertEnabled) && insertEnabled;
+
+    if (!insertIntoDatabase)
+    {
+        return;
+    }
+
+    var connectionString = configuration.GetConnectionString("ScoreDb");
+    if (string.IsNullOrWhiteSpace(connectionString))
+    {
+        Console.Error.WriteLine("ConnectionStrings:ScoreDb is not configured.");
+        return;
+    }
+
+    var services = new ServiceCollection();
+    services.AddScoreInfrastructure(connectionString);
+
+    await using var serviceProvider = services.BuildServiceProvider();
+    await using var scope = serviceProvider.CreateAsyncScope();
+
+    var repository = scope.ServiceProvider.GetRequiredService<IScoreRepository>();
+    await repository.AddRangeAsync(records);
+
+    Console.WriteLine($"{records.Count} record(s) saved to the database.");
 }
-
-// now lets try and find the highest score
-if(entities.Count == 0)
+catch (FormatException ex)
 {
-    Console.WriteLine("No data found.");
-    return;
+    Console.Error.WriteLine($"Invalid CSV: {ex.Message}");
 }
-
-int highestScore = entities.Max(x => x.Score);
-
-// find people with the highest score
-var highestScorers = entities
-    .Where(x => x.Score == highestScore)
-    .OrderBy(x => x.FirstName)
-    .ThenBy(x => x.SecondName)
-    .ToList();
-
-// Display final result to STDOUT
-foreach (var person in highestScorers)
+catch (Exception ex)
 {
-    Console.WriteLine($"{person.FirstName} {person.SecondName}");
+    Console.Error.WriteLine($"Processing failed: {ex.Message}");
 }
-Console.WriteLine($"Score: {highestScore}");
-
-// ------------------------------------------------------
-// Insert into database if enabled
-// ------------------------------------------------------
-
-if (!insertIntoDatabase)
-{
-    Console.WriteLine();
-    Console.WriteLine(
-        "Database insert is disabled in configuration.");
-
-    return;
-}
-
-
-// ------------------------------------------------------
-// Validate connection string
-// ------------------------------------------------------
-
-if (string.IsNullOrWhiteSpace(connectionString))
-{
-    Console.WriteLine(
-        "Database connection string has not been configured.");
-
-    return;
-}
-await SQLPublisher.publishScoreAsync(connectionString, entities);

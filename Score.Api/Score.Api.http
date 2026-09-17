@@ -1,6 +1,24 @@
-@Score.Api_HostAddress = http://localhost:5080
+@Score_Api_HostAddress = https://localhost:7181
+@token = paste-jwt-here
 
-GET {{Score.Api_HostAddress}}/weatherforecast/
+GET {{Score_Api_HostAddress}}/api/scores/top
+Authorization: Bearer {{token}}
 Accept: application/json
 
 ###
+
+GET {{Score_Api_HostAddress}}/api/scores/by-name?firstName=George&secondName=Of%20The%20Jungle
+Authorization: Bearer {{token}}
+Accept: application/json
+
+###
+
+POST {{Score_Api_HostAddress}}/api/scores
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "firstName": "Thabo",
+  "secondName": "Mokoena",
+  "score": 82
+}

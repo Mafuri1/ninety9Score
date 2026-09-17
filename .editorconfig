@@ -1,0 +1,7 @@
+root = true
+
+[*.cs]
+dotnet_style_namespace_match_folder = true:suggestion
+csharp_style_namespace_declarations = file_scoped:suggestion
+csharp_style_var_for_built_in_types = true:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion

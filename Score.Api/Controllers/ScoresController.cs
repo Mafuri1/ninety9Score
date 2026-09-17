@@ -1,123 +1,100 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using Score.Api.Data;
 using Score.Api.Dtos;
-using Score.Api.Models;
+using Score.Core.Models;
+using Score.Core.Repositories;
 
-namespace Score.Api.Controllers
+namespace Score.Api.Controllers;
+
+[ApiController]
+[Route("api/[controller]")]
+[Authorize]
+public sealed class ScoresController : ControllerBase
 {
-    [ApiController]
-    [Route("api/[controller]")]
-    public class ScoresController : ControllerBase
+    private readonly IScoreRepository _repository;
+
+    public ScoresController(IScoreRepository repository)
     {
-        private readonly ScoreDbContext _dbContext;
-
-        public ScoresController(ScoreDbContext dbContext)
-        {
-            _dbContext = dbContext;
-        }
-
-        [HttpGet]
-        [Authorize]
-        public async Task<ActionResult<IEnumerable<ScoreResponse>>> GetAll()
-        {
-            var scores = await _dbContext.Scores
-                .AsNoTracking()
-                .Select(x => new ScoreResponse
-                {
-                    Id = x.Id,
-                    FirstName = x.FirstName,
-                    SecondName = x.SecondName,
-                    Score = x.Score
-                })
-                .ToListAsync();
-
-            return Ok(scores);
-        }
-
-        [HttpGet("search/{search}")]
-        [Authorize]
-        public async Task<ActionResult<ScoreResponse>> GetBySearchString(string search)
-        {
-            var score = await _dbContext.Scores
-                .AsNoTracking()
-                .Where(x =>
-                    x.FirstName.Contains(search) ||
-                    x.SecondName.Contains(search))
-                .Select(x => new ScoreResponse
-                {
-                    Id = x.Id,
-                    FirstName = x.FirstName,
-                    SecondName = x.SecondName,
-                    Score = x.Score
-                })
-                .FirstOrDefaultAsync();
-
-            if (score == null)
-            {
-                return NotFound();
-            }
-
-            return Ok(score);
-        }
-        [HttpPost]
-        [Authorize(Policy = "WriteScores")]
-        public async Task<ActionResult<ScoreResponse>> Create(CreateScoreRequest request)
-        {
-            var entity = new ScoreEntity
-            {
-                FirstName = request.FirstName.Trim(),
-                SecondName = request.SecondName.Trim(),
-                Score = request.Score
-            };
-
-            _dbContext.Scores.Add(entity);
-
-            await _dbContext.SaveChangesAsync();
-
-            var response = new ScoreResponse
-            {
-                Id = entity.Id,
-                FirstName = entity.FirstName,
-                SecondName = entity.SecondName,
-                Score = entity.Score
-            };
-
-            return CreatedAtAction(
-                nameof(GetBySearchString),
-                new { id = entity.Id },
-                response);
-        }
-
-        [HttpGet("highest")]
-        [Authorize]
-        public async Task<ActionResult<IEnumerable<ScoreResponse>>> GetHighest()
-        {
-            var highestScore = await _dbContext.Scores
-                .MaxAsync(x => (int?)x.Score);
-
-            if (highestScore == null)
-            {
-                return Ok(Array.Empty<ScoreResponse>());
-            }
-
-            var highestScorers = await _dbContext.Scores
-                .AsNoTracking()
-                .Where(x => x.Score == highestScore)
-                .OrderBy(x => x.FirstName)
-                .ThenBy(x => x.SecondName)
-                .Select(x => new ScoreResponse
-                {
-                    Id = x.Id,
-                    FirstName = x.FirstName,
-                    SecondName = x.SecondName,
-                    Score = x.Score
-                })
-                .ToListAsync();
-
-            return Ok(highestScorers);
-        }
-
+        _repository = repository;
     }
+
+    /// <summary>Creates a new score record.</summary>
+    [HttpPost]
+    [Authorize(Policy = "WriteScores")]
+    [ProducesResponseType(typeof(ScoreResponse), StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    public async Task<ActionResult<ScoreResponse>> Create(
+        CreateScoreRequest request,
+        CancellationToken cancellationToken)
+    {
+        var record = new ScoreRecord
+        {
+            FirstName = request.FirstName.Trim(),
+            SecondName = request.SecondName.Trim(),
+            Score = request.Score
+        };
+
+        await _repository.AddAsync(record, cancellationToken);
+
+        var response = Map(record);
+        var location = Url.ActionLink(
+            nameof(GetByName),
+            values: new { firstName = record.FirstName, secondName = record.SecondName });
+
+        return Created(location ?? $"/api/scores/by-name?firstName={Uri.EscapeDataString(record.FirstName)}&secondName={Uri.EscapeDataString(record.SecondName)}", response);
+    }
+
+    /// <summary>Retrieves score records for a specific first-name and second-name pair.</summary>
+    [HttpGet("by-name")]
+    [ProducesResponseType(typeof(IReadOnlyList<ScoreResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<ActionResult<IReadOnlyList<ScoreResponse>>> GetByName(
+        [FromQuery] string firstName,
+        [FromQuery] string secondName,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(firstName) || string.IsNullOrWhiteSpace(secondName))
+        {
+            return BadRequest("Both firstName and secondName are required.");
+        }
+
+        var records = await _repository.GetByNameAsync(
+            firstName.Trim(),
+            secondName.Trim(),
+            cancellationToken);
+
+        if (records.Count == 0)
+        {
+            return NotFound();
+        }
+
+        return Ok(records.Select(Map).ToList());
+    }
+
+    /// <summary>Retrieves all scorers sharing the highest score, ordered alphabetically.</summary>
+    [HttpGet("top")]
+    [ProducesResponseType(typeof(TopScorersResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    public async Task<ActionResult<TopScorersResponse>> GetTop(
+        CancellationToken cancellationToken)
+    {
+        var result = await _repository.GetTopScorersAsync(cancellationToken);
+
+        return Ok(new TopScorersResponse
+        {
+            Score = result.Score,
+            Scorers = result.Scorers.Select(Map).ToList()
+        });
+    }
+
+    private static ScoreResponse Map(ScoreRecord record) => new()
+    {
+        Id = record.Id,
+        FirstName = record.FirstName,
+        SecondName = record.SecondName,
+        Score = record.Score
+    };
 }

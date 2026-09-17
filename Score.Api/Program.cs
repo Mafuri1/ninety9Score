@@ -1,54 +1,29 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi;
-using Score.Api.Data;
+using Score.Infrastructure;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ------------------------------------------------------
-// Controllers
-// ------------------------------------------------------
-
 builder.Services.AddControllers();
 
+var connectionString = builder.Configuration.GetConnectionString("ScoreDb")
+    ?? throw new InvalidOperationException("ConnectionStrings:ScoreDb is not configured.");
 
-// ------------------------------------------------------
-// Database
-// ------------------------------------------------------
-
-builder.Services.AddDbContext<ScoreDbContext>(options =>
-    options.UseSqlServer(
-        builder.Configuration.GetConnectionString("ScoreDb")));
-
-
-// ------------------------------------------------------
-// JWT Authentication + Role Based Authorization
-// ------------------------------------------------------
-
-var requireAuthenticatedUser = new AuthorizationPolicyBuilder()
-    .RequireAuthenticatedUser()
-    .Build();
-
-builder.Services
-    .AddAuthorizationBuilder()
-    //all endpoints require authentication by default, even if you accidentally forget [Authorize] on a new controller.
-    .SetFallbackPolicy(requireAuthenticatedUser)
-    .AddPolicy("WriteScores", policy =>
-    {
-        policy.RequireRole("admin");
-    });
+builder.Services.AddScoreInfrastructure(connectionString);
 
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer();
 
-builder.Services.AddAuthorization();
+var authenticatedUserPolicy = new AuthorizationPolicyBuilder()
+    .RequireAuthenticatedUser()
+    .Build();
 
-
-// ------------------------------------------------------
-// Swagger
-// ------------------------------------------------------
+builder.Services
+    .AddAuthorizationBuilder()
+    .SetFallbackPolicy(authenticatedUserPolicy)
+    .AddPolicy("WriteScores", policy => policy.RequireRole("admin"));
 
 builder.Services.AddSwaggerGen(options =>
 {
@@ -56,67 +31,40 @@ builder.Services.AddSwaggerGen(options =>
     {
         Title = "Score API",
         Version = "v1",
-        Description = "API for managing score information."
+        Description = "REST API for writing scores, retrieving a person's score and retrieving the top scorer(s)."
     });
 
-    // Define JWT Bearer authentication
-    options.AddSecurityDefinition(
-        "bearer",
-        new OpenApiSecurityScheme
-        {
-            Type = SecuritySchemeType.Http,
-            Scheme = "bearer",
-            BearerFormat = "JWT",
-            Description = "Enter your JWT access token."
-        });
+    options.AddSecurityDefinition("bearer", new OpenApiSecurityScheme
+    {
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT",
+        Description = "Paste the JWT access token. Swagger adds the Bearer prefix automatically."
+    });
 
-    // Apply JWT authentication to Swagger operations
-    options.AddSecurityRequirement(document =>
-        new OpenApiSecurityRequirement
-        {
-            [new OpenApiSecuritySchemeReference(
-                "bearer",
-                document)] = []
-        });
+    options.AddSecurityRequirement(document => new OpenApiSecurityRequirement
+    {
+        [new OpenApiSecuritySchemeReference("bearer", document)] = []
+    });
 });
 
-
-// ------------------------------------------------------
-// Build
-// ------------------------------------------------------
-
 var app = builder.Build();
-
-
-// ------------------------------------------------------
-// Swagger
-// ------------------------------------------------------
 
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
-
     app.UseSwaggerUI(options =>
     {
-        options.SwaggerEndpoint(
-            "/swagger/v1/swagger.json",
-            "Score API v1");
-
+        options.SwaggerEndpoint("/swagger/v1/swagger.json", "Score API v1");
         options.RoutePrefix = "swagger";
     });
 }
 
-
-// ------------------------------------------------------
-// Middleware
-// ------------------------------------------------------
-
 app.UseHttpsRedirection();
-
 app.UseAuthentication();
-
 app.UseAuthorization();
-
 app.MapControllers();
 
 app.Run();
+
+public partial class Program { }

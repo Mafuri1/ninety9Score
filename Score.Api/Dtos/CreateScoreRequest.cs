@@ -1,16 +1,16 @@
-﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations;
 
-namespace Score.Api.Dtos
+namespace Score.Api.Dtos;
+
+public sealed class CreateScoreRequest
 {
-    public class CreateScoreRequest
-    {
-        [Required]
-        public string FirstName { get; set; } = string.Empty;
+    [Required]
+    [MaxLength(100)]
+    public string FirstName { get; set; } = string.Empty;
 
-        [Required]
-        public string SecondName { get; set; } = string.Empty;
+    [Required]
+    [MaxLength(200)]
+    public string SecondName { get; set; } = string.Empty;
 
-        [Range(0, 100)]
-        public int Score { get; set; }
-    }
+    public int Score { get; set; }
 }

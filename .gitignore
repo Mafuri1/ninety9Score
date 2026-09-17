@@ -1,9 +1,12 @@
-﻿################################################################################
-# This .gitignore file was automatically created by Microsoft(R) Visual Studio.
-################################################################################
-
-**/.vs
-**/bin
-**/obj
-**Migrations
+**/bin/
+**/obj/
+.vs/
+.idea/
 *.user
+*.suo
+TestResults/
+coverage/
+*.db
+*.db-shm
+*.db-wal
+appsettings.Local.json
